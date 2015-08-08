@@ -1,0 +1,502 @@
+---
+title: 'STA 380 Homework 1: Barton, Jace'
+author: "Jace Barton"
+date: "August 5, 2015"
+output: word_document
+---
+
+To begin, I load the libraries I will need throughout my analysis.
+
+```{r}
+library(dplyr)
+library(mosaic)
+library(ggplot2)
+library(fImport)
+library(foreach)
+library(RCurl)
+```
+
+I will also be performing random draws. So the reader can reproduce my results, I will set the seed as value 722.
+
+```{r}
+set.seed(722)
+```
+
+Now, to the analysis!
+
+#Exploratory Analysis
+##County Voting in Georgia for 2000 Election
+
+To begin, I will import the data set, then view a summary of the data.
+
+```{r}
+GeorgiaURLString = getURL("https://raw.githubusercontent.com/jacebarton/STA380/master/data/georgia2000.csv", ssl.verifypeer=0L, followlocation = 1L)
+Georgia = read.csv(text=GeorgiaURLString)
+summary(Georgia)
+```
+
+I now want to calculate the undercount for each county and append that to the dataframe. I then want to look at a pivot table of the undercount by machine type.
+```{r}
+Georgia$undercount = abs(Georgia$votes - Georgia$ballots)
+UndercountByEquip = group_by(Georgia, equip)
+UndercountByEquip = summarise(UndercountByEquip, AvgUndercount = mean(Georgia$undercount), SumBallots = sum(Georgia$ballots), SumVotes = sum(Georgia$votes), BallotConversionRate = sum(Georgia$votes)/sum(Georgia$ballots))
+UndercountByEquip
+```
+
+It appears that the punch equipment type is vastly undercounting. It is the second most used equipment type, but has the lowest conversion rate of ballots to votes at 95%. I want to look at this information graphically though to confirm my suspicions. 
+
+```{r}
+barplot(UndercountByEquip$AvgUndercount, names = UndercountByEquip$equip, ylab="Avg Undercount", xlab="Voting Equipment Type", col=4, main="Average Undercount by Voting Mechanism")
+barplot((1-UndercountByEquip$BallotConversionRate)*100, names = UndercountByEquip$equip, ylab="Ballot Failure Rate", xlab="Voting Equipment Type", col=4, main="Percentage of Ballots which Don't Become Votes by Equipment Type")
+```
+
+The punch equipment is the biggest offender. But where are the punch machines located? Are they equally spread across Georgia? Or are they located in areas which are poorer? Or have a higher percentage of minorities? 
+
+I begin by looking at a crosstab of county type (poor or rich) versus type of machine.
+```{r}
+PoorVsEquip = xtabs(~poor + equip, data=Georgia)
+PoorVsEquip
+PoorVsEquipProp = prop.table(PoorVsEquip, margin=2)
+PoorVsEquipProp
+```
+
+59% of punch machines were located in non-poor counties while 41% were located in poor counties. Thus, from this I can say non-poor counties were more likely to have their votes undercounted. But is that the full story? 
+
+The following plot graphs the percentage of the population in a county which is African American on the x-axis against the undercount in that county on the y-axis. The points are color coded to reflect the voting equipment used in the county. Finally, the poor counties are representing as triangles, while the non-poor counties are represented as octagons. 
+
+```{r}
+ggplot(Georgia, aes(x=perAA, y=undercount, color = equip, shape = factor(poor))) + geom_point (size=5)
+```
+
+I immediately observe that the three counties with the most undercounted ballots were counties with a substantial African American population (greater than 40%). Those counties were also using punch cards. I also note that the right-most counties in the graph (the counties which are most substantially African-American in makeup) are poor. 
+
+In conclusion, punch machines see a higher rate of undercounting compared to other machine types. While the impact is spread between non-poor and poor counties about equally, minority counties are more likely to see substantial undercount than non-minority counties.
+
+#Bootstrapping
+##Stock market portfolios and levels of risk and return
+
+The goal of this exercise is to see the levels of risk and return across varying compositions of different asset types. The asset types in question are domestic equities, Treasury bonds, corporate bonds, Emerging-market equities, and real estate. These five classes are represented in order by the following Exchange Traded Funds (ETFs).
+*SPY
+*TLT
+*LQD
+*EEM
+*VNQ
+
+I first want to gather five years worth of returns on these five assets. This is accomplished below.
+```{r}
+MyExchangeTradedFunds = c("SPY", "TLT", "LQD", "EEM", "VNQ")
+ETFPrices = yahooSeries(MyExchangeTradedFunds, from='2010-08-01', to='2015-07-31')
+
+summary(ETFPrices)
+```
+
+As seen, lots of information about the ETFs is returned by this data grab.However, for this theoretical exercise I am only interested in the returns of the assets. Below, I utilize a helper function presented in class by Dr. Scott to obtain the required returns.
+
+```{r}
+YahooPricesToReturns = function(series) {
+  mycols = grep('Adj.Close', colnames(series))
+  closingprice = series[,mycols]
+  N = nrow(closingprice)
+  percentreturn = as.data.frame(closingprice[2:N,]) / as.data.frame(closingprice[1:(N-1),]) - 1
+  mynames = strsplit(colnames(percentreturn), '.', fixed=TRUE)
+  mynames = lapply(mynames, function(x) return(paste0(x[1], ".PctReturn")))
+  colnames(percentreturn) = mynames
+  as.matrix(na.omit(percentreturn))
+}
+```
+
+I will now calculate the returns, look at the scatter plots of each return type against each other return type, and view summary statistics of the returns.
+
+```{r}
+ETFReturns = YahooPricesToReturns(ETFPrices)
+pairs(ETFReturns)
+summary(ETFReturns)
+```
+
+What is the spread of these returns? I will look at the Standard Deviation (SD) and Interquartile Range (IQR) of each asset.
+```{r}
+ReturnSDs = rep(0,5)
+
+for (i in 1:length(ReturnSDs)){
+  ReturnSDs[i] = sd(ETFReturns[,i])
+}
+
+ReturnIQRs = rep(0,5)
+
+for (i in 1:length(ReturnIQRs)){
+  ReturnIQRs[i] = quantile(ETFReturns[,i], .75) - quantile(ETFReturns[,i], .25)
+}
+
+ReturnSDs
+ReturnIQRs
+```
+
+The results are similar. A standard deviation for each return type is about 1% (the exception being LQD) while the middle 50% of returns also varies by about 1%.
+
+What do these returns look like as line graphs? As histograms?
+
+```{r}
+par(mfrow=c(3,2))
+plot(ETFReturns[,1], type='l', ylim=c(-.05, .05))
+plot(ETFReturns[,2], type='l', ylim=c(-.05, .05))
+plot(ETFReturns[,3], type='l', ylim=c(-.05, .05))
+plot(ETFReturns[,4], type='l', ylim=c(-.05, .05))
+plot(ETFReturns[,5], type='l', ylim=c(-.05, .05))
+
+par(mfrow=c(3,2))
+hist(ETFReturns[,1], 25, xlim=c(-.10, .10), xlab="SPY Returns")
+hist(ETFReturns[,2], 25, xlim=c(-.10, .10), xlab="TLT Returns")
+hist(ETFReturns[,3], 25, xlim=c(-.10, .10), xlab="LQD Returns")
+hist(ETFReturns[,4], 25, xlim=c(-.10, .10), xlab="EEM Returns")
+hist(ETFReturns[,5], 50, xlim=c(-.10, .10), xlab="VNQ Returns")
+```
+
+While I will begin building my portfolios with an even split, eventually I will be interested in comprising risky and more reserved portfolios. Thus, looking at the volatility of each of the ETFs is informative. First off, I don't observe any seasonality or obvious trends in any of the returns. I do notice that the LQD returns are by far the least volatile, followed by the TLT returns. The SPY returns are closer to the EEM Returns and the VNQ returns, but they do offer a middle ground. The main difference is the latter two ETFs have more instances of extreme returns than the SPY asset. I will keep all of this in mind for when I am choosing which assets to include in my risky and risk-averse portfolios. 
+
+But first, I begin by selecting a portfolio that is an even split of all five assets. I want to get a sense of how well this portfolio would perform in an average month (here defined as 20 trading days) of performance. To do this, I will randomly select 20 days of returns (with replacement) from the five years of return data. I will start with $100,000. Rebalancing my money every day to maintain my desired 20-20-20-20-20 split, I will calculate how much money I possess at the end of the month. This will be one result. I will find 10,000 such results and average them together to get a sense of the true distribution of returns for this portfolio.
+
+Below are the results for the Even Split Simulation.
+
+```{r}
+EvenSplitSimulation = foreach(i=1:10000, .combine='rbind') %do% {
+  totalwealth = 100000
+  weights = c(0.2, 0.2, 0.2, 0.2, 0.2)
+  holdings = weights * totalwealth
+  n_days = 20
+  for(today in 1:n_days) {
+    return.today = resample(ETFReturns, 1, orig.ids=FALSE)
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    holdings = weights*totalwealth
+  }
+  totalwealth
+}
+
+summary(EvenSplitSimulation)
+par(mfrow=c(1,1))
+hist(EvenSplitSimulation[,1], 25)
+sd(EvenSplitSimulation)
+```
+
+In terms of expected return, the center of the even split distribution is about $700. I can expect a standard deviation of about $2700. Maximum and minimum losses are both at about $11,000. 
+
+I now want to set up a vector to keep track of the alpha values across each of my simulations. The alpha value of a simulation will tell me what return I can expect at the 5th percentile.
+
+```{r}
+AlphaLevels = rep(0,3)
+AlphaLevels[1] = quantile(EvenSplitSimulation,0.05) - 100000
+AlphaLevels[1]
+```
+
+Thus, in 95% of cases, I will do better than a loss of $3600.
+
+I now move on to finding a safer portfolio - one with less spread. From earlier, I remember that by far the least variable asset was LQD. I want the large majority of my portfolio to be in this stock. I will also include the next two least variable assests, TLT and SPY, though in smaller proportions. I arbitrarily choose to put 80% of my portfolio in LQD with 10% each in TLT and SPY. I keep the same parameters as before of 20 days and $100,000 starting value with rebalancing at the end of each day.
+
+```{r}
+set.seed(722)
+SafeSimulation = foreach(i=1:10000, .combine='rbind') %do% {
+  totalwealth = 100000
+  weights = c(0.1, 0.1, 0.8)
+  holdings = weights * totalwealth
+  n_days = 20
+  wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+  for(today in 1:n_days) {
+    return.today = resample(ETFReturns[,c(1,2,3)], 1, orig.ids=FALSE)
+    holdings = holdings + holdings*return.today
+    totalwealth = sum(holdings)
+    wealthtracker[today] = totalwealth
+    holdings = weights*totalwealth
+  }
+  totalwealth
+}
+
+summary(SafeSimulation)
+par(mfrow=c(1,1))
+hist(SafeSimulation[,1], 25)
+sd(SafeSimulation)
+
+AlphaLevels[2] = quantile(SafeSimulation,0.05) - 100000
+AlphaLevels[2]
+```
+
+We achieve a much lower standard deviation of about $1600. My minimum loss is about $6000 and my maximum gain is about $6000 as well. My average return is about $500. In 95% of cases, I can expect to do better than a loss of $2100.
+
+Finally, I want to evaluate a risky portfolio. I earlier noted that the two most variable assets of the five were EEM and VNQ. I will thus be building my portfolio around these two assets. However, I want to be more systematic in choosing how I weight the two ETFs. Thus, I will run the risky simulation 11 times, starting with 100% of my money in VNQ and working my way in 10% increments to having all of my money in EEM. For example, in the third run, 80% of my money will be in VNQ and 20% in EEM.
+
+```{r}
+set.seed(722)
+PossibleWeights = seq(0, 1, length = 11)
+ReturnValues = rep(0, 10000)
+RiskySimulation = foreach(i=1:11, .combine = 'rbind') %do% {
+  for(j in 1:10000) {
+    totalwealth = 100000
+    weights = c(PossibleWeights[i], 1-PossibleWeights[i])
+    holdings = weights * totalwealth
+    n_days = 20
+    wealthtracker = rep(0, n_days) # Set up a placeholder to track total wealth
+    for(today in 1:n_days) {
+      return.today = resample(ETFReturns[,c(4,5)], 1, orig.ids=FALSE)
+      holdings = holdings + holdings*return.today
+      totalwealth = sum(holdings)
+      wealthtracker[today] = totalwealth
+      holdings = weights*totalwealth
+    }
+    ReturnValues[j] = totalwealth
+  }
+  ReturnValues
+}
+
+```
+
+But which set of weights do I choose to be my "risky" portfolio? First, let's look at what the histograms of returns look like.
+
+```{r}
+par(mfrow=c(3, 4))
+hist(RiskySimulation[1,], 25)
+hist(RiskySimulation[2,], 25)
+hist(RiskySimulation[3,], 25)
+hist(RiskySimulation[4,], 25)
+hist(RiskySimulation[5,], 25)
+hist(RiskySimulation[6,], 25)
+hist(RiskySimulation[7,], 25)
+hist(RiskySimulation[8,], 25)
+hist(RiskySimulation[9,], 25)
+hist(RiskySimulation[10,], 25)
+hist(RiskySimulation[11,], 25)
+```
+
+It's hard to see much difference here. Perhaps the alpha levels will be revealing. I will plot my return at alpha = .05 for each portfolio against that same portfolio's return at alpha = .95. 
+
+```{r}
+AlphaVsOneMinusAlpha = matrix(0, nrow=11, ncol=2)
+
+for (i in 1:length(AlphaVsOneMinusAlpha[,1])) {
+  AlphaVsOneMinusAlpha[i,1] = quantile(RiskySimulation[i,],0.05) - 100000
+}
+
+for (i in 1:length(AlphaVsOneMinusAlpha[,2])) {
+  AlphaVsOneMinusAlpha[i,2] = quantile(RiskySimulation[i,],0.95) - 100000
+}
+
+AlphaVsOneMinusAlpha
+par(mfrow=c(1, 1))
+plot(AlphaVsOneMinusAlpha, main="Returns at Alpha Value .05 vs Returns at Alpha Value .95", xlab="Return at Alpha = .05", ylab = "Return at Alpha = .95")
+```
+
+It thus looks like the "riskiest" portfolio is portfolio 11, which has 100% of the money in EEM. Since this violates the spirit of having a portfolio comprised of two assets, I will instead choose portfolio 10, which has the next lowest return at alpha = .05. Here is the summary of Portfolio 10, which is 90% EEM and 10% VNQ.
+
+```{r}
+summary(RiskySimulation[10,])
+par(mfrow=c(1,1))
+hist(RiskySimulation[10,], 25)
+sd(RiskySimulation[10,])
+```
+
+We achieve a much higher standard deviation of about $5850. My minimum loss is about $23,000 and my maximum gain is about $26,000. My average return is about $100, though my median return is to lose $40. In 95% of cases, I can expect to do better than a loss of $9300.
+
+I now need to update my alpha vector to include the risky portfolio.
+
+```{r}
+AlphaLevels[3] = quantile(RiskySimulation[10,],0.05) - 100000
+
+AlphaLevels
+```
+
+Which portfolio I recommend depends entirely upon the riskiness of the indivdual investor. Personally as a risk-averse individual, I would opt for the "safe" portfolio, but I know I'm not going to have the chance to make 20% returns with this portfolio - the absolute best case scenario is 6% and the most likely is 0.5%. The even-split portfolio represents a nice middle ground between the two extremes of risk. My best case scenario bumps up to a 10% gain with a most likely return of about 0.7%. The risky portfolio is too volatile for my money. The standard deviation is around double that of the even split portfolio. I know there is risk inherent in the stock market, but the risky portfolio seems too much like gambling for my taste.
+
+
+#Clustering and PCA
+##Characteristics of Wine from Northern Portugal
+
+Given only chemical properties, can I distinguish whether a wine is red or white? More challenging, can I distinguish the quality of the wine from its chemical characteristics? 
+
+I begin my analysis by loading in the data.
+
+```{r}
+WineURLString = getURL("https://raw.githubusercontent.com/jacebarton/STA380/master/data/wine.csv", ssl.verifypeer=0L, followlocation = 1L)
+Wine = read.csv(text=WineURLString)
+summary(Wine)
+```
+
+There are 1600 red wines and 4900 white wines represented in the data. The quality of all the wines ranges from 3-9 on a 1-10 scale with an average of about 6. 
+
+###Clustering
+
+In order to perform clustering analysis, I will need to scale and center this wine data. In this process, I will also remove the quality and color features as these are outputs I will eventually attempt to predict. I will keep track of the means and standard deviations of each feature in case I want to convert back to unstandardized data.
+
+```{r}
+WineScaled = scale(Wine[,-(c(12,13))], center=TRUE, scale=TRUE)
+
+mu = attr(WineScaled,"scaled:center")
+sigma = attr(WineScaled,"scaled:scale")
+```
+
+In class, we discussed both hierarchical clustering and K-means clustering. For this data set, I know I'm not going to want many clusters as ultimately I'm going to be interested in predicting only a handful of output classes (Red vs Wine and a number from 3-9 for color and quality, respectively). With only a few clusters, hierarchical clustering is not an ideal candidate as I will get the overwhelming majority of the data points in one cluster and then several much smaller clusters. Thus, I will pursue K-Means clustering. 
+
+But how many K's shall I choose? To answer this, I will use the CH(k) matrix we discussed in class which attempts to balance inter-cluster distance with intra-cluster distance. To calculate CH(k), I will loop through K values from 2 to 20 looking for the maximum CH(k).
+
+```{r}
+PossibleKs = matrix(0, nrow=19, ncol=2)
+PossibleKs[,1] = 2:20
+
+set.seed(722)
+for(i in 1:19){
+  WineKMeanClusters = kmeans(WineScaled, i, nstart=50)
+  CHk = ((WineKMeanClusters$betweenss/(i-1))/(WineKMeanClusters$tot.withinss/(nrow(WineScaled)-i)))
+  PossibleKs[i,2] = CHk 
+}
+plot(PossibleKs, xlab="# of Clusters", Ylab="CH(k)", main="Choosing K to Maximize CH(k)")
+```
+
+CH(k) peaks at k=4, so I will have four clusters of wine.
+
+I now will add which cluster each wine is assigned to on the original data set.
+```{r}
+set.seed(722)
+WineKMeanClusters = kmeans(WineScaled, 4, nstart=50)
+Wine$cluster = factor(WineKMeanClusters$cluster)
+WineKMeanClusters$centers
+summary(factor(WineKMeanClusters$cluster))
+```
+Cluster 4 is the biggest, followed by Clusters 3, 2, and 1 in descending order. Clusters 1 and 2 have high acidity, while cluster 4 has the highest alcohol level and cluster three the most sugar. Note that the centers are given in Z-scores since this analysis was run on the centered and scaled data. 
+
+Below, two sample plots are shown. The X and Y axis in each plot are different features of the wine. The wine cluster is indicated by color while the wine color is indicated by shape. These plots are only meant to get a sense of how well we can judge the clusters, though since we can only visualize two dimensions at a time, this sense will be dulled.
+
+```{r}
+qplot(fixed.acidity, alcohol, data = Wine, color=factor(WineKMeanClusters$cluster), shape=Wine$color, size=2)
+qplot(chlorides, citric.acid, data = Wine, color=factor(WineKMeanClusters$cluster), shape=Wine$color, size=2)
+```
+
+Most importantly, how well do my clusters differentiate between wine colors?
+
+```{r}
+ClusterVsColor = xtabs(~cluster + color, data=Wine)
+ClusterVsColor
+ClusterVsColorProp = prop.table(ClusterVsColor, margin=1)
+ClusterVsColorProp
+```
+
+Clusters 3 and 4 are the "White" clusters, and they perform best with a 99% classification rate. Clusters 1 and 2 are the "red" clusters, and they don't perform quite as well, but both still ahve classifcation rates above 90%.
+
+How well can the clusters judge quality compared to the baseline percentages?
+
+```{r}
+ClusterVsQuality = xtabs(~cluster + quality, data=Wine)
+ClusterVsQuality
+ClusterVsQualityProp = prop.table(ClusterVsQuality, margin=1)
+ClusterVsQualityProp
+
+#Baseline percentages
+QualityCounts = summary(factor(Wine$quality))
+QualityCountsProp = QualityCounts/sum(QualityCounts)
+QualityCountsProp
+```
+
+Not very well. None of the percentages in the cluster stand out as vastly different from the corresponding percentage in the baseline. Put another way, if you tell me a wine is in Cluster 3, I will not be able to tell you with any more certainty what quality wine it is versus just telling you what I could glean from the unclustered data (i.e., a quality of 6 is most)
+
+Performance is somewhat good. For example, in the baseline, 43% of wines are quality 6 while 33% are quality 5. But in cluster 4, the difference is more pronounced - 47% of cluster 4 wines are quality 6 while 21% are cluster 5. Conversely, in cluster 2, 50% of wines are quality 5 while 36% are cluster 6. So I can do a little better than just guessing the most common quality if the wine is in cluster 2.
+
+
+###Principal Component Analysis (PCA)
+Overall, I was pretty happy with the performance of my clusters. Will I be able to top it using PCA? 
+
+```{r}
+WinePrincipalComponent = prcomp(WineScaled)
+loadings = WinePrincipalComponent$rotation
+scores = WinePrincipalComponent$x
+loadings[,1:2]
+head(scores[,1:2])
+qplot(scores[,1], scores[,2], color=Wine$color, xlab='Component 1', ylab='Component 2')
+qplot(scores[,1], scores[,2], color=Wine$quality, xlab='Component 1', ylab='Component 2') + scale_color_gradient(low="blue", high="orange")
+
+```
+
+
+Looking at the first two components, I cannot determine quality with any accuracy. However, the reds and whites are very nicely split, and that's looking almost solely across component 1. I am unaware of how to quantify a classification rate based on PCA, but just looking at the picture, I prefer PCA to Clustering for distingushing red wines from white wines.
+
+#Market Segmentation
+##Using Social Media Data to Find Similar Customers
+
+As always, the first step is to read in the data.
+
+```{r}
+SocialMediaURLString = getURL("https://raw.githubusercontent.com/jacebarton/STA380/master/data/social_marketing.csv", ssl.verifypeer=0L, followlocation = 1L)
+SocialMedia = read.csv(text=SocialMediaURLString)
+summary(SocialMedia)
+```
+
+Now, I need to find the frequency of the content types for each user rather than the count.
+
+```{r}
+# Normalize phrase counts to phrase frequencies
+SocialMediaFrequencies = SocialMedia[,-1]/rowSums(SocialMedia[,-1])
+```
+
+And now, since I'm feeling wild, I'll perform PCA analysis *first* instead of cluster analysis. I know, try to contain your excitement.
+
+###PCA for Social Media Data
+
+```{r}
+SocialMediaPCA = prcomp(SocialMediaFrequencies, scale=TRUE)
+SMLoadings = SocialMediaPCA$rotation
+SMScores = SocialMediaPCA$x
+
+qplot(SMScores[,1], SMScores[,2], xlab='Component 1', ylab='Component 2')
+```
+
+Unlike the wine data, there's not an output variable for me to look at on a plot of Component 1 vs Component 2. Instead, I can try looking at the features which score highest on each component, starting with component 1.
+
+```{r}
+Component1Ordered = order(SMLoadings[,1])
+colnames(SocialMediaFrequencies)[tail(Component1Ordered,5)]
+```
+
+Religion scores highest, followed by sports_fandom and parenting (note that the highest score is the last entry).
+
+```{r}
+Component2Ordered = order(SMLoadings[,2])
+colnames(SocialMediaFrequencies)[tail(Component2Ordered,5)]
+```
+
+In Component 2, chatter, politics, and travel score highest.
+
+Now, I'll see if some of these patterns hold when I look at the clustered data.
+
+###Social Media Clusters
+
+Similar to the wine problem, I will use CH(k) to determine what number of clusters to use.
+
+```{r}
+PossibleKsSocial = matrix(0, nrow=19, ncol=2)
+PossibleKsSocial[,1] = 2:20
+set.seed(722)
+for(i in 1:19){
+  SocialKMeanClusters = kmeans(SocialMediaFrequencies, i, nstart=50)
+  CHk = ((SocialKMeanClusters$betweenss/(i-1))/(SocialKMeanClusters$tot.withinss/(nrow(SocialMediaFrequencies)-i)))
+  PossibleKsSocial[i,2] = CHk 
+}
+plot(PossibleKsSocial, xlab="# of Clusters", ylab="CH(k)", main="Choosing K to Maximize CH(k)")
+```
+
+Yet again, four clusters is the optimal choice. I will add the cluster values to the original social media data.
+
+```{r}
+set.seed(722)
+SocialKMeanClusters = kmeans(SocialMediaFrequencies, 4, nstart=50)
+SocialMedia$cluster = factor(SocialKMeanClusters$cluster)
+
+summary(factor(SocialKMeanClusters$cluster))
+```
+
+Now, I'll look at the five most significant features for each cluster.
+
+```{r}
+sort(SocialKMeanClusters$centers[1,], decreasing=TRUE)[1:5]
+sort(SocialKMeanClusters$centers[2,], decreasing=TRUE)[1:5]
+sort(SocialKMeanClusters$centers[3,], decreasing=TRUE)[1:5]
+sort(SocialKMeanClusters$centers[4,], decreasing=TRUE)[1:5]
+```
+
+The only feature from the first component to appear in the clusters' most significant features is sports_fandom. From the second component, chatter appears in all 4 clusters, while politics appears in 1, travel appears in 2, shopping appears in 1, and automotive appears in 0. 
+
+Given the difficulty in interpreting PCA in this case, I will base my analysis off of the clusters. The clusters also make sense. For example, health-nutrition, personal fitness, and outdoors all appear in a cluster together, while sports-fandom and college-uni also appear in a cluster together. Additionally, fashion and beauty appear in a cluster. These are three good market segments to begin to target amongst the company's customers. 
