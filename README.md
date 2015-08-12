@@ -79,18 +79,30 @@ Readings:
 Principal component analysis (PCA); factor analysis; canonical correlation analysis; multi-dimensional scaling.
 
 Scripts and data:  
+- [pca_2D.R](R/pca_2D.R)  
 - [pca_intro.R](R/pca_intro.R)  
 - [congress109.R](R/congress109.R), [congress109.csv](data/congress109.csv), and [congress109members.csv](data/congress109members.csv)  
+- [gasoline.R](R/gasoline.R) and [gasoline.csv](data/gasoline.csv)  
+- [FXmonthly.R](R/FXmonthly.R), [FXmonthly.csv](data/FXmonthly.csv), and [currency_codes.txt](data/currency_codes.txt)  
+- [cca_intro.R](R/cca_intro.R), [mmreg.csv](data/mmreg.csv), and [mouse_nutrition.csv](data/mouse_nutrition.csv)  
+
 
 Readings:  
 - ISL Section 10.2 for the basics  
-- Shalizi Chapters 18 and 19 (more advanced)    
+- Shalizi Chapters 18 and 19 (more advanced).  In particular, Chapter 19 has a lot more advanced material on factor analysis, beyond what we covered in class.      
 - Elements Chapter 14.5 (more advanced)  
 
 
 ### (6) Text data
 
-Co-occurrence statistics; TF-IDF; topic models; vector-space models of text (if time allows).
+Co-occurrence statistics; naive Bayes; TF-IDF; topic models; vector-space models of text (if time allows).
+
+Scripts and data:  
+- [textutils.R](R/textutils.R) 
+- [nyt_stories.R](R/nyt_stories.R) and [selections from the New York Times](https://github.com/jgscott/STA380/tree/master/data/nyt_corpus).
+- [tm_examples.R](R/tm_examples.R) and [selections from the Reuters newswire](https://github.com/jgscott/STA380/tree/master/data/ReutersC50).
+- [naive_bayes.R](R/naive_bayes.R)  
+- [congress109_topics.R](R/congress109_topics.R)
 
 Readings: TBA
 
@@ -100,3 +112,4 @@ Readings: TBA
 Coverage of these topics will depend on the time available.  Possibilities include: anomaly detection; label propagation; learning association rules; graph partitioning; partial least squares.  
 
 Readings: TBA
+
