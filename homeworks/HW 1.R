@@ -231,6 +231,11 @@ head(scores[,1:2])
 qplot(scores[,1], scores[,2], color=Wine$color, xlab='Component 1', ylab='Component 2')
 qplot(scores[,1], scores[,2], color=Wine$quality, xlab='Component 1', ylab='Component 2', size=1) + scale_color_gradient(low="blue", high="orange")
 
+
+#Market Segmentation
+##Using Social Media Data to Find Similar Customers
+
+
 SocialMedia = read.csv("data/social_marketing.csv", header=TRUE, row.names=1)
 
 # Normalize phrase counts to phrase frequencies
@@ -243,8 +248,8 @@ SMScores = pc2$x
 
 qplot(SMScores[,1], SMScores[,2], xlab='Component 1', ylab='Component 2')
 
-# The top words associated with each component
-o1 = order(SMLoadings[,1])
+# The top categories associated with each component
+Component1Ordered = order(SMLoadings[,1])
 colnames(SocialMediaFrequencies)[head(o1,25)]
 colnames(SocialMediaFrequencies)[tail(o1,25)]
 
@@ -254,7 +259,7 @@ colnames(Z)[tail(o2,25)]
 
 PossibleKsSocial = matrix(0, nrow=19, ncol=2)
 PossibleKsSocial[,1] = 2:20
-
+set.seed(722)
 for(i in 1:19){
   SocialKMeanClusters = kmeans(SocialMediaFrequencies, i, nstart=50)
   CHk = ((SocialKMeanClusters$betweenss/(i-1))/(SocialKMeanClusters$tot.withinss/(nrow(SocialMediaFrequencies)-i)))
