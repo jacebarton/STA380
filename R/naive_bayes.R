@@ -23,11 +23,11 @@ my_corpus = Corpus(VectorSource(all_docs))
 names(my_corpus) = file_list
 
 # Preprocessing
-my_corpus = tm_map(my_corpus, content_transformer(tolower)) # make everything lowercase
-my_corpus = tm_map(my_corpus, content_transformer(removeNumbers)) # remove numbers
-my_corpus = tm_map(my_corpus, content_transformer(removePunctuation)) # remove punctuation
-my_corpus = tm_map(my_corpus, content_transformer(stripWhitespace)) ## remove excess white-space
-my_corpus = tm_map(my_corpus, content_transformer(removeWords), stopwords("SMART"))
+my_corpus = tm_map(my_corpus, tolower) # make everything lowercase
+my_corpus = tm_map(my_corpus, removeNumbers) # remove numbers
+my_corpus = tm_map(my_corpus, removePunctuation) # remove punctuation
+my_corpus = tm_map(my_corpus, stripWhitespace) ## remove excess white-space
+my_corpus = tm_map(my_corpus, removeWords, stopwords("SMART"))
 
 DTM = DocumentTermMatrix(my_corpus)
 DTM # some basic summary statistics

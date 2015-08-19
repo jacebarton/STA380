@@ -1,0 +1,325 @@
+---
+title: "STA380 Homework 2 Barton, Jace"
+author: "Jace Barton"
+date: "August 19, 2015"
+output: word_document
+---
+
+First, I load the libraries I will need.
+
+```{r, set_message = FALSE}
+library(RCurl)
+library(ggplot2)
+library(reshape)
+library(plyr)
+library(tm)
+library(caret)
+library(kknn)
+library(e1071)
+library(randomForest)
+library(arules)
+```
+
+I will run a random forest model in this homework. Thus, I will set the random seed so my results can be reproduced.
+
+```{r}
+set.seed(722)
+```
+
+Now I'm ready to begin.
+
+#Graph Creation
+##Flights at ABIA
+
+First, I will load in the data for the analysis.
+
+```{r}
+AirportURLString = getURL("https://raw.githubusercontent.com/jacebarton/STA380/master/data/ABIA.csv", ssl.verifypeer=0L, followlocation = 1L)
+Airport = read.csv(text=AirportURLString)
+summary(Airport)
+```
+
+I immediately key in on delays as being the most interesting information in this dataset. For a given aircraft, are delays consistent for flights leaving Austin versus arriving in Austin? 
+
+To answer this, I first must split the dataset in two - one half for all of the flights leaving Austin, the other for all the flights arriving in Austin.
+
+```{r}
+DepartureDelay <- data.frame(carrier=Airport$UniqueCarrier, delay=Airport$DepDelay, leaving=Airport$Origin)
+head(DepartureDelay)
+```
+
+This first step creates a data frame with all rows from the original data sets and columns for the airline, total delay for that flight, and the city from which the flight departed. I now want to filter this dataset to capture only Austin as the city of departure. I will also omit any rows where the departing city is unknown, as this means the flight was cancelled.
+
+```{r}
+DepartureDelay = DepartureDelay[DepartureDelay$leaving == "AUS", ]
+DepartureDelay = na.omit(DepartureDelay)
+summary(DepartureDelay)
+```
+
+I can tell from the summary that this split the data almost exactly in half. I now need to aggregate delay information by carrier.
+
+```{r}
+CarrierDepartureDelays = ddply(DepartureDelay, ~carrier, summarise, mean=mean(delay), sd=sd(delay))
+CarrierDepartureDelays
+```
+
+This completes my pre-processing for departing flights. I now need to do the same thing for arriving flights before final clean up.
+
+```{r}
+ArrivalDelay <- data.frame(carrier=Airport$UniqueCarrier, delay=Airport$ArrDelay, arriving=Airport$Dest)
+head(DepartureDelay)
+ArrivalDelay = ArrivalDelay[ArrivalDelay$arriving == "AUS", ]
+ArrivalDelay = na.omit(ArrivalDelay)
+summary(ArrivalDelay)
+CarrierArrivalDelays = ddply(ArrivalDelay, ~carrier, summarise, mean=mean(delay), sd=sd(delay))
+CarrierArrivalDelays
+```
+
+I now want to merge these two separate data frames. I also want to make the data more clear by using the airline name instead of the airline unique code.
+
+```{r}
+CarrierDelays = merge(CarrierArrivalDelays, CarrierDepartureDelays, by="carrier")
+CarrierDelays$CarrierNames = c("Pinnacle", "American", "JetBlue", "Continental", "Delta", "AtlanticSE", "Frontier", "Envoy", "Northwest", "Comair", "SkyWest", "United", "US", "Southwest", "ExpressJet", "Mesa")
+CarrierDelays
+```
+
+Lastly, I will be interested in the total count of flights into and out of Austin for each airline. I will add this as a column. While I'm at it, I'll change the column names to be more meaningful.
+
+```{r}
+CarrierDelays$Count = summary(Airport$UniqueCarrier)
+colnames(CarrierDelays) = c("CarrierCode", "MeanDepartureDelay", "SDDepartureDelay", "MeanArrivalDelay", "SDArrivalDelay", "CarrierNames", "Count")
+CarrierDelays
+```
+
+Now, what's all this been for? I want to get a picture of which airline is the best choice if I want to minimize my delays. I'd prefer my airline to be below average amongst all airlines in average delay on each leg of my trip - both departing and arriving. This can be seen in the following plot.
+
+```{r}
+ggplot(CarrierDelays, aes(x=MeanArrivalDelay, y=MeanDepartureDelay, label=CarrierNames)) + annotate("rect", xmin = -Inf, xmax = mean(CarrierDelays$MeanArrivalDelay), ymin = -Inf, ymax = mean(CarrierDelays$MeanDepartureDelay), fill= "green")  + 
+  annotate("rect", xmin = -Inf, xmax = mean(CarrierDelays$MeanArrivalDelay), ymin = mean(CarrierDelays$MeanDepartureDelay), ymax = Inf , fill= "yellow") + 
+  annotate("rect", xmin = mean(CarrierDelays$MeanArrivalDelay), xmax = Inf, ymin = -Inf, ymax = mean(CarrierDelays$MeanDepartureDelay), fill= "yellow") + 
+  annotate("rect", xmin = mean(CarrierDelays$MeanArrivalDelay), xmax = Inf, ymin = mean(CarrierDelays$MeanDepartureDelay), ymax = Inf, fill= "red") + 
+  geom_point(aes(size=CarrierDelays$Count)) + geom_vline(xintercept=mean(CarrierDelays$MeanArrivalDelay)) + geom_hline(yintercept=mean(CarrierDelays$MeanDepartureDelay)) + scale_size_continuous(range=c(3,15)) + geom_text(size=3, hjust=1)
+
+```
+
+Dots in the green square have smaller delays on average both arriving and departing, whereas dots in the red square have larger delays on average in both directions. The dot size is proportional to the number of flights the airline has into and out of Austin.
+
+This graph can help a traveler determine which airline to take. For instance, if I want an airline with a lot of flights and good performance in getting me home on time, I'll choose American. On the other hand, if I want an airline with a lot of flights and I care most about getting to my non-Austin destination on time, I'll choose Southwest.
+
+#Text Analysis
+##Author Attribution
+
+I am given approximately 50 New York Times articles each of 50 different authors as a training set, and another 50 atricles each of the same authors as a test set. Can I accurately predict which author a given article from the test set belongs to? 
+
+For simplicity, this analysis will ignore words from the test data set which are not in the training data set.
+
+First, I pass in a function I will need to read the text data.
+
+```{r}
+readerPlain = function(fname){
+  readPlain(elem=list(content=readLines(fname)), 
+            id=fname, language='en') }
+```
+
+Now, I will bring in the test data, using the procedure from the example in class.
+
+```{r}
+#Get all files
+train_author_dirs = Sys.glob('../data/ReutersC50/C50train/*')
+train_file_list = NULL
+train_labels = NULL
+#build a single corpus
+for(author in train_author_dirs) {
+  author_name = substring(author, first=29)
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  train_file_list = append(train_file_list, files_to_add)
+  train_labels = append(train_labels, rep(author_name, length(files_to_add)))
+}
+
+# Need a more clever regex to get better names here
+train_all_docs = lapply(train_file_list, readerPlain) 
+names(train_all_docs) = sub('.txt', '', names(train_all_docs))
+
+train_corpus = Corpus(VectorSource(train_all_docs))
+names(train_corpus) = train_file_list
+
+# Clean up tokens in corpus
+train_corpus = tm_map(train_corpus, tolower) # make everything lowercase
+train_corpus = tm_map(train_corpus, removeNumbers) # remove numbers
+train_corpus = tm_map(train_corpus, removePunctuation) # remove punctuation
+train_corpus = tm_map(train_corpus, stripWhitespace) ## remove excess white-space
+train_corpus = tm_map(train_corpus, removeWords, stopwords("SMART"))
+
+Train_Document_Term_Matrix = DocumentTermMatrix(train_corpus)
+Train_Document_Term_Matrix # some basic summary statistics
+Train_Document_Term_Matrix = removeSparseTerms(Train_Document_Term_Matrix, 0.975)
+tm:::inspect(Train_Document_Term_Matrix[1:10,1:5])
+# Now a dense matrix
+Train_Matrix = as.matrix(Train_Document_Term_Matrix)
+```
+
+I will repeat the above steps to build out the testing data.
+
+```{r}
+test_author_dirs = Sys.glob('../data/ReutersC50/C50test/*')
+test_file_list = NULL
+test_labels = NULL
+#build a single corpus
+for(author in test_author_dirs) {
+  author_name = substring(author, first=28)
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  test_file_list = append(test_file_list, files_to_add)
+  test_labels = append(test_labels, rep(author_name, length(files_to_add)))
+}
+
+# Need a more clever regex to get better names here
+test_all_docs = lapply(test_file_list, readerPlain) 
+names(test_all_docs) = sub('.txt', '', names(test_all_docs))
+
+test_corpus = Corpus(VectorSource(test_all_docs))
+names(test_corpus) = test_file_list
+
+# Clean up tokens in corpus
+test_corpus = tm_map(test_corpus, tolower) # make everything lowercase
+test_corpus = tm_map(test_corpus, removeNumbers) # remove numbers
+test_corpus = tm_map(test_corpus, removePunctuation) # remove punctuation
+test_corpus = tm_map(test_corpus, stripWhitespace) ## remove excess white-space
+test_corpus = tm_map(test_corpus, removeWords, stopwords("SMART"))
+
+Test_Document_Term_Matrix = DocumentTermMatrix(test_corpus, control = list(dictionary=Terms(Train_Document_Term_Matrix)) )
+Test_Document_Term_Matrix # some basic summary statistics
+tm:::inspect(Test_Document_Term_Matrix[1:10,1:5])
+# Now a dense matrix
+Test_Matrix = as.matrix(Test_Document_Term_Matrix)
+```
+
+Now, I will build a Naive Bayes model to attempt to classify which test articles belong to which authors.
+
+```{r}
+NaiveBayesModel = naiveBayes(Train_Matrix, as.factor(train_labels), laplace=1)
+
+NaiveBayesPredict = predict(object=NaiveBayesModel,newdata = Test_Matrix)
+```
+
+Now that the model is built, I can begin to look at results in different ways.
+
+```{r}
+NaiveBayesResults = as.data.frame(table(NaiveBayesPredict,test_labels))
+NaiveBayesResultsTable = table(NaiveBayesPredict, test_labels)
+total_correct_vector = rep(0, 50)
+predicted_per_author = rep(0,50)
+for (i in 1:length(NaiveBayesResultsTable[1,])){
+  total_correct_vector[i] = NaiveBayesResultsTable[i, i]
+  predicted_per_author[i] = sum(NaiveBayesResultsTable[i,])
+}
+
+CorrectByAuthor = data.frame(row.names(NaiveBayesResultsTable), total_correct_vector)
+CorrectByAuthor
+
+PredictedForAuthor = data.frame(row.names(NaiveBayesResultsTable), predicted_per_author)
+SortedPredictedForAuthor = PredictedForAuthor[order(-PredictedForAuthor$predicted_per_author),]
+SortedPredictedForAuthor
+
+OverallClassificationRate = sum(total_correct_vector)/2500
+OverallClassificationRate
+
+PrecisionRateByAuthor = data.frame(row.names(NaiveBayesResultsTable), total_correct_vector/predicted_per_author)
+PrecisionRateByAuthor
+```
+
+We achive a classification rate of 18.52%, which isn't superb. Moreover, there are 15 authors who we never predict to have written an article while there are 7 authors we predict to have written over 100 articles. In short, the results from Naive Bayes are inconsistent at best. 
+
+I will try a random forest model to see if I get better results.
+
+```{r}
+TrainDataFrame = as.data.frame(Train_Matrix)
+TestDataFrame = as.data.frame(Test_Matrix)
+
+set.seed(722)
+AuthorRandomForest = randomForest(x=TrainDataFrame, y=as.factor(train_labels), ntree=50, mtry=30)
+
+PredictedAuthor = predict(AuthorRandomForest, newdata = TestDataFrame)
+```
+
+I set the number of trees arbitrarily to be 50. The recomended number of variables to consider for categorical random forest problems is the square root of the number of predictor variables. In this case, that is the 1189 words remaining after the tokenization process. I round down from approximately 34 to arrive at 30 words. I then fit my random forest model to the test data set.
+
+
+```{r}
+RandomForestResults = as.data.frame(table(PredictedAuthor,test_labels))
+RandomForestResultsTable = table(PredictedAuthor, test_labels)
+RF_total_correct_vector = rep(0, 50)
+RF_predicted_per_author = rep(0,50)
+for (i in 1:length(RandomForestResultsTable[1,])){
+  RF_total_correct_vector[i] = RandomForestResultsTable[i, i]
+  RF_predicted_per_author[i] = sum(RandomForestResultsTable[i,])
+}
+
+RFCorrectByAuthor = data.frame(row.names(RandomForestResultsTable),RF_total_correct_vector)
+RFCorrectByAuthor
+
+RFPredictedForAuthor = data.frame(row.names(RandomForestResultsTable), RF_predicted_per_author)
+RFSortedPredictedForAuthor = RFPredictedForAuthor[order(-RFPredictedForAuthor$RF_predicted_per_author),]
+RFSortedPredictedForAuthor
+
+RFOverallClassificationRate = sum(RF_total_correct_vector)/2500
+RFOverallClassificationRate
+
+RFPrecisionRateByAuthor = data.frame(row.names(RandomForestResultsTable), RF_total_correct_vector/RF_predicted_per_author)
+RFPrecisionRateByAuthor
+```
+
+I'm immediately much happier with my results. The overall classifcation rate jumps to 58%. Furthermore, there is a much better distribution of predicted number of articles for each author. This statistic ranges from 19 to 82 instead of 0 to 554 as in the Naive Bayes case. 
+
+Another nice thing about the Random Forest model is I can see which of the tokens were most important in fitting the model.
+
+```{r}
+RFImportance = as.data.frame(importance(AuthorRandomForest))
+RFImportanceDataFrame = data.frame(row.names(RFImportance), RFImportance)
+SortRFImportance = RFImportanceDataFrame[order(-RFImportanceDataFrame$MeanDecreaseGini),]
+SortRFImportance[1:10,]
+```
+Interestingly, many international words appear on the list. This leads me to believe that the authors we were most succesfully able to classify write mostly about international items for the paper.
+
+#Association Rules
+##Practice with Association Rule Mining
+
+First, I read in the data directly as transaction data and view a summary.
+
+```{r}
+Groceries = read.transactions("../data/groceries.txt", format = "basket", sep=",")
+summary(Groceries)
+```
+
+Whole milk is the most popular item, followed by a generic vegetable category and a generic bread category.
+
+Next, I will create association rules for these transactions using arbitrary cutoffs for support, confidence, and number of items allowed in a rule. I will explore the cutoffs in more detail next.
+
+```{r}
+GroceriesRules <- apriori(Groceries, parameter=list(support=.005, confidence=.5, maxlen=4))
+arules:::inspect(GroceriesRules)
+```
+
+These cutoffs yield 120 rules. While this is a lot to parse, I notice that a lot of the rules are used to predict when someone will buy whole milk. Since whole milk is the most common item, I want to look at lift in an attempt to "normalize" against how frequent an item is.
+
+```{r}
+arules:::inspect(subset(GroceriesRules, subset=lift > 3))
+```
+
+There are 8 rules with a lift of more than 3, indicating they have predictive power beyond just predicting a popular item will be in a basket. These rules don't predict purchasing whole milk, but they do predict purchasing other vegetables, which was the second most common item. Many of the rules make sense intuitively. For instance, people who buy citrus fruit and root vegetables are already shopping for produce, so buying other vegetbales isn't a stretch of the imagination. 
+
+Let's now look at rules which occur in more than 1.5% of all transactions.
+
+
+```{r}
+arules:::inspect(subset(GroceriesRules, subset=support > 0.015))
+```
+
+There are only two rules which occur more than 1.5% of the time, and both are used to predict whole milk. From this, we can see that if a customer buys yogurt and produce, they are also very likely to buy whole milk.
+
+Finally, I want to look at the cases where the predicted item occurs most frequently with the predictor items.
+
+```{r}
+arules:::inspect(subset(GroceriesRules, subset=support > .003 & confidence > 0.65))
+```
+
+All of the predicted items in this case involve whole milk. Again, produce and other dairy products show up. These rules all have high lift as well.
